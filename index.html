@@ -703,12 +703,12 @@ function sleep(ms) {
         near_blanking_var = hexToFloat('0x' + ('00' + s.getUint8(34).toString(16)).slice(-2) + ('00' + s.getUint8(35).toString(16)).slice(-2) + ('00' + s.getUint8(36).toString(16)).slice(-2) + ('00' + s.getUint8(37).toString(16)).slice(-2)); //hexToFloat('0x' + ('00' + s.getUint8(42).toString(16)).slice(-2) + ('00' + s.getUint8(43).toString(16)).slice(-2) + ('00' + s.getUint8(44).toString(16)).slice(-2) + ('00' + s.getUint8(45).toString(16)).slice(-2));
         far_blanking_var = hexToFloat('0x' + ('00' + s.getUint8(38).toString(16)).slice(-2) + ('00' + s.getUint8(39).toString(16)).slice(-2) + ('00' + s.getUint8(40).toString(16)).slice(-2) + ('00' + s.getUint8(41).toString(16)).slice(-2));  //hexToFloat('0x' + ('00' + s.getUint8(46).toString(16)).slice(-2) + ('00' + s.getUint8(47).toString(16)).slice(-2) + ('00' + s.getUint8(48).toString(16)).slice(-2) + ('00' + s.getUint8(49).toString(16)).slice(-2));  
         empty_distance = hexToFloat('0x' + ('00' + s.getUint8(42).toString(16)).slice(-2) + ('00' + s.getUint8(43).toString(16)).slice(-2) + ('00' + s.getUint8(44).toString(16)).slice(-2) + ('00' + s.getUint8(45).toString(16)).slice(-2));    //hexToFloat('0x' + ('00' + s.getUint8(50).toString(16)).slice(-2) + ('00' + s.getUint8(51).toString(16)).slice(-2) + ('00' + s.getUint8(52).toString(16)).slice(-2) + ('00' + s.getUint8(53).toString(16)).slice(-2));
-        compensated_var_m = convert_to_mtrs(compensated_var);
+        compensated_var_m = convert_to_mtrs(compensated_var);        
         if(Math.round(compensated_var_m) == 24.0)
         {
           mode_var = 20.0;
         }
-        else if(Math.round(compensated_var_m) == 9.6)
+        else if(compensated_var.toFixed(1) == 9.6)
         {
           mode_var = 8.0;
         }
