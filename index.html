@@ -101,7 +101,7 @@ function sleep(ms) {
     var button_press = 0;
     var isTraceOn = 0;
     var level_var, distance_var, volume_var, compensated_var, compensated_var_m, mA_output_var, temperature_var, date_var, time_var, gate_start, gate_stop, echo_var, noise_var, status_var, near_blanking_var, far_blanking_var, empty_distance, mode_var, bit0, bit1, bit2, bit3, bit4, bit5, bit6, bit7;
-    var p104_units_val, p605_units_val, p104_units, p605_units, p104_rx_status, p605_rx_status, cmd_sent, param_init_query, power_init_query, p104_param_update;
+    var p104_units_val, p605_units_val, p104_units, p605_units, p104_rx_status, p605_rx_status, cmd_sent, param_init_query, power_init_query, p104_param_update, span_val;
     level_var = 0.000;//4.346;
     distance_var = 0.000;//1.654;
     volume_var = 0.000;//2.370;
@@ -131,6 +131,7 @@ function sleep(ms) {
     param_init_query = 0;
     power_init_query = 0;
     p104_param_update = 0;
+    span_val = 5.7;
 
     // set interval
     var echo_tid;
@@ -187,6 +188,7 @@ function sleep(ms) {
       param_init_query = 0;
       power_init_query = 0;
       p104_param_update = 0;
+      span_val = 5.7;
     }
 
     // Function to select the volume units to be displayed depending on p605 value
@@ -703,12 +705,12 @@ function sleep(ms) {
         near_blanking_var = hexToFloat('0x' + ('00' + s.getUint8(34).toString(16)).slice(-2) + ('00' + s.getUint8(35).toString(16)).slice(-2) + ('00' + s.getUint8(36).toString(16)).slice(-2) + ('00' + s.getUint8(37).toString(16)).slice(-2)); //hexToFloat('0x' + ('00' + s.getUint8(42).toString(16)).slice(-2) + ('00' + s.getUint8(43).toString(16)).slice(-2) + ('00' + s.getUint8(44).toString(16)).slice(-2) + ('00' + s.getUint8(45).toString(16)).slice(-2));
         far_blanking_var = hexToFloat('0x' + ('00' + s.getUint8(38).toString(16)).slice(-2) + ('00' + s.getUint8(39).toString(16)).slice(-2) + ('00' + s.getUint8(40).toString(16)).slice(-2) + ('00' + s.getUint8(41).toString(16)).slice(-2));  //hexToFloat('0x' + ('00' + s.getUint8(46).toString(16)).slice(-2) + ('00' + s.getUint8(47).toString(16)).slice(-2) + ('00' + s.getUint8(48).toString(16)).slice(-2) + ('00' + s.getUint8(49).toString(16)).slice(-2));  
         empty_distance = hexToFloat('0x' + ('00' + s.getUint8(42).toString(16)).slice(-2) + ('00' + s.getUint8(43).toString(16)).slice(-2) + ('00' + s.getUint8(44).toString(16)).slice(-2) + ('00' + s.getUint8(45).toString(16)).slice(-2));    //hexToFloat('0x' + ('00' + s.getUint8(50).toString(16)).slice(-2) + ('00' + s.getUint8(51).toString(16)).slice(-2) + ('00' + s.getUint8(52).toString(16)).slice(-2) + ('00' + s.getUint8(53).toString(16)).slice(-2));
-        compensated_var_m = convert_to_mtrs(compensated_var);        
+        compensated_var_m = convert_to_mtrs(compensated_var);
         if(Math.round(compensated_var_m) == 24.0)
         {
           mode_var = 20.0;
         }
-        else if(compensated_var.toFixed(1) == 9.6)
+        else if(compensated_var_m.toFixed(1) == 9.6)
         {
           mode_var = 8.0;
         }
@@ -887,6 +889,7 @@ function sleep(ms) {
       }
       else if(string_val.includes("/P106:")) {
         document.getElementById('p106-box').value = string_val.slice(string_val.lastIndexOf(':') + 1);//string_val.substring(string_val.indexOf(':') + 1);
+        span_val = convert_to_mtrs(document.getElementById('p106-box').value);
         param_query = 5;
         if((param_start_val == 0) || (param_tid == false))
           settings_msg_clear();
@@ -2579,6 +2582,8 @@ function myLoadFunction() {
               </td>                 
                 <!-- Offline mode -->
                 <script src="./js/chart.js"></script>
+                <script src="js/hammer.min.js"></script>
+                <script src="js/chartjs-plugin-zoom.min.js"></script>
                 <script>
                 // X points/labels
                 var xdata = [];
@@ -2636,6 +2641,8 @@ function myLoadFunction() {
                         ctx.fillRect(x.getPixelForValue(0), top, near_blanking_var*width/compensated_var, height); // Near blanking area (x.getPixelForValue(0), top, 0.3*width/7.2, height)
                         ctx.fillStyle = 'yellow';
                         ctx.fillRect(x.getPixelForValue((200.0/1.2)*empty_distance/mode_var), top, width*(far_blanking_dist - empty_distance)/compensated_var, height); // Far blanking area
+                        ctx.fillStyle = '#EFFFE8';
+                        ctx.fillRect(x.getPixelForValue((200.0/1.2)*(empty_distance - span_val)/mode_var), top, span_val*width/compensated_var, height); // Span
                         ctx.strokeStyle = 'red';
                         ctx.strokeRect(x.getPixelForValue(distance_var*200/compensated_var), top, 0, height);  // Distance//(x0, y0, x1, y1); (x.getPixelForValue(distance_var*200/7.2), top, 0, height)
                         ctx.strokeStyle = 'black';
@@ -2715,6 +2722,34 @@ function myLoadFunction() {
                                     size: 24,
                                 }
                             }
+                        },
+                        zoom: {
+                          zoom: {
+                            wheel: {
+                              enabled: true,
+                              mode: 'xy'
+                            },
+                            pinch: {
+                              enabled: true,
+                              mode: 'xy'
+                            },
+                            drag: {
+                              enabled: true,
+                              mode: 'y'
+                            },
+                            // mode: "x",
+                            // speed: 0.1,
+                            // threshold: 2,
+                            // sensitivity: 3,                        
+                          },
+                          pan: {
+                            enabled: true,
+                            mode: 'xy'
+                          },
+                          limits: {
+                            y: {min: 0, max: 1000},
+                            x: {min: 0, max: xdata.length}
+                          }
                         }
                       },
                     maintainAspectRatio: false,                                      
