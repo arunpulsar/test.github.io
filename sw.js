@@ -1,46 +1,51 @@
+const APP_CACHE = 'web-app-offline-loop-calibration-v19';
+
 self.addEventListener('install', e => {
     e.waitUntil(
-      caches.open('web-app-offline').then(function(cache) {
+      caches.open(APP_CACHE).then(function(cache) {
         return cache.addAll([
-            '/aruntest.github.io/',
-            '/aruntest.github.io/index.html',
-            '/aruntest.github.io/index.js',
-            '/aruntest.github.io/sw.js',
-            '/aruntest.github.io/css/element.css',
-            '/aruntest.github.io/css/font-awesome.min.css',
-			      '/aruntest.github.io/css/jquery-impromptu.css',
-            '/aruntest.github.io/css/jura.css',
-            '/aruntest.github.io/css/normalize.min.css',
-            '/aruntest.github.io/css/skel-noscript.css',
-            '/aruntest.github.io/css/slider.css',
-            '/aruntest.github.io/css/style.css',
-            '/aruntest.github.io/css/style-desktop.css',
-            '/aruntest.github.io/css/style-lr.css',
-            '/aruntest.github.io/fonts/fontawesome-webfont.eot',
-            '/aruntest.github.io/fonts/fontawesome-webfont.svg',
-            '/aruntest.github.io/fonts/fontawesome-webfont.ttf',
-            '/aruntest.github.io/fonts/fontawesome-webfont.woff',
-            '/aruntest.github.io/fonts/fontawesome-webfont.woff2',
-            '/aruntest.github.io/fonts/segoeui.ttf',
-            '/aruntest.github.io/fonts/segoeui.woff',
-            '/aruntest.github.io/fonts/segoeui.woff2',
-            '/aruntest.github.io/fonts/segoeuibold.ttf',
-            '/aruntest.github.io/fonts/segoeuibold.woff',
-            '/aruntest.github.io/fonts/segoeuibold.woff2',
-            '/aruntest.github.io/fonts/segoeuisemibold.ttf',
-            '/aruntest.github.io/fonts/segoeuisemibold.woff',
-            '/aruntest.github.io/fonts/segoeuisemibold.woff2',
-            '/aruntest.github.io/js/bootstrap.min.js',
-            '/aruntest.github.io/js/chart.js',
-            '/aruntest.github.io/js/ekko-lightbox.js',
-            '/aruntest.github.io/js/jquery-2.1.1.min.js',
-			      '/aruntest.github.io/js/jquery-impromptu.js',
-            '/aruntest.github.io/js/lang.js',
-            '/aruntest.github.io/js/script-lr2.js',
-            '/aruntest.github.io/js/slider.js',
-            '/aruntest.github.io/img/pulsaricon-rgb64_2.png',
-            '/aruntest.github.io/img/pulsarlogo.svg',
-            '/aruntest.github.io/img/tank1.png'
+            '/web-app/',
+            '/web-app/index.html',
+            '/web-app/index.js',
+            '/web-app/sw.js',
+            '/web-app/css/element.css',
+            '/web-app/css/font-awesome.min.css',
+            '/web-app/css/jquery-impromptu.css',
+            '/web-app/css/jura.css',
+            '/web-app/css/normalize.min.css',
+            '/web-app/css/skel-noscript.css',
+            '/web-app/css/slider.css',
+            '/web-app/css/style.css',
+            '/web-app/css/style-desktop.css',
+            '/web-app/css/style-lr.css?v=loop-calibration-18',
+            '/web-app/fonts/fontawesome-webfont.eot',
+            '/web-app/fonts/fontawesome-webfont.svg',
+            '/web-app/fonts/fontawesome-webfont.ttf',
+            '/web-app/fonts/fontawesome-webfont.woff',
+            '/web-app/fonts/fontawesome-webfont.woff2',
+            '/web-app/fonts/segoeui.ttf',
+            '/web-app/fonts/segoeui.woff',
+            '/web-app/fonts/segoeui.woff2',
+            '/web-app/fonts/segoeuibold.ttf',
+            '/web-app/fonts/segoeuibold.woff',
+            '/web-app/fonts/segoeuibold.woff2',
+            '/web-app/fonts/segoeuisemibold.ttf',
+            '/web-app/fonts/segoeuisemibold.woff',
+            '/web-app/fonts/segoeuisemibold.woff2',
+            '/web-app/js/bootstrap.min.js',
+            '/web-app/js/chart.js',
+            '/web-app/js/chartjs-plugin-zoom.min.js',
+            '/web-app/js/ekko-lightbox.js',
+            '/web-app/js/hammer.min.js',
+            '/web-app/js/jquery-2.1.1.min.js',
+            '/web-app/js/jquery-impromptu.js',
+			      '/web-app/js/lang.js?v=loop-calibration-19',
+            '/web-app/js/param.js',
+            '/web-app/js/script-lr2.js',
+            '/web-app/js/slider.js',
+            '/web-app/img/pulsaricon-rgb64_2.png',
+            '/web-app/img/pulsarlogo.svg',
+            '/web-app/img/tank1.png'
         ]);
       })
     );
@@ -49,6 +54,6 @@ self.addEventListener('install', e => {
    self.addEventListener('fetch', e => {
      console.log(e.request.url);
      e.respondWith(
-       caches.match(e.request).then(response => response || fetch(e.request))
+       caches.open(APP_CACHE).then(cache => cache.match(e.request)).then(response => response || fetch(e.request))
      );
    });

@@ -10,7 +10,7 @@
     <link rel="stylesheet" href="css/style.css" />
     <link rel="stylesheet" href="css/style-desktop.css" />
   </noscript>  
-  <link rel="stylesheet" href="css/style-lr.css">
+  <link rel="stylesheet" href="css/style-lr.css?v=loop-calibration-18">
   <link href="css/style.css" rel="stylesheet">
   <link href="css/slider.css" rel="stylesheet">
 
@@ -24,7 +24,8 @@
   <script src="js/slider.js"></script>
   <script src="index.js" defer></script>
   <script src="js/jquery-impromptu.js"></script>
-  <script src="js/lang.js"></script>
+  <script src="js/lang.js?v=loop-calibration-19"></script>
+  <script src="js/param.js"></script>
 
   <style>
     .my_text
@@ -101,7 +102,11 @@ function sleep(ms) {
     var button_press = 0;
     var isTraceOn = 0;
     var level_var, distance_var, volume_var, compensated_var, compensated_var_m, mA_output_var, temperature_var, date_var, time_var, gate_start, gate_stop, echo_var, noise_var, status_var, near_blanking_var, far_blanking_var, empty_distance, mode_var, bit0, bit1, bit2, bit3, bit4, bit5, bit6, bit7;
-    var p104_units_val, p605_units_val, p104_units, p605_units, p104_rx_status, p605_rx_status, cmd_sent, param_init_query, power_init_query, p104_param_update;
+    var p104_units_val, p605_units_val, p104_units, p605_units, p104_rx_status, p605_rx_status, cmd_sent, param_init_query, power_init_query, p104_param_update, span_val;
+    var start_point, width_val;
+    var CommandSent;
+    let a = [];
+    var s, offset;
     level_var = 0.000;//4.346;
     distance_var = 0.000;//1.654;
     volume_var = 0.000;//2.370;
@@ -120,7 +125,7 @@ function sleep(ms) {
     far_blanking_var = 20.0;//6.0;
     far_blanking_dist = 7.2;
     empty_distance = 6.0;
-    mode_var = 6.0;
+    //mode_var = 6.0;  // not used
     p104_units_val = 1;
     p605_units_val = 3;
     p104_units = "m";
@@ -131,22 +136,38 @@ function sleep(ms) {
     param_init_query = 0;
     power_init_query = 0;
     p104_param_update = 0;
+    span_val = 5.7;
 
     // set interval
     var echo_tid;
     var datem_tid;
-    var p104_tid;
-    var p605_tid;
+    //var p104_tid;
+    //var p605_tid;
+    var param_set1_tid;
+    var param_set2_tid;
+    var param_set3_tid;    
     var param_tid;
     var param_query=0;
     var isDisconnecting=0;
     var isTerminated=0;
     var param_start_val = 0;
+    var param_sets_loaded = false;
+    var calibration_supported = false;
+    var loop_queue = [];
+    var loop_pending = null;
+    var loop_tid;
+    var loop_reply = '';
+    var loop_reply_tid;
+    var loop_sent = false;
+    var loop_quiet_until = 0;
+    var loop_send_deadline = 0;
 
     var login_stage = 0;    // Login status
 
     var currentlang = localStorage.getItem('lang_select_List');
     var lang_map = lang_array.map(a => a.English);
+    var param_num = param_info.map(a => a.pnum);
+    var param_val = param_info.map(a => a.pvalue);
 
     // Resetting all the variables
     function reset_params() {
@@ -170,7 +191,7 @@ function sleep(ms) {
       far_blanking_var = 20.0;
       far_blanking_dist = 7.2;
       empty_distance = 6.0;
-      mode_var = 6.0;
+      //mode_var = 6.0;  // not used
       p104_units_val = 1;
       p605_units_val = 3;
       p104_units = "m";
@@ -185,8 +206,30 @@ function sleep(ms) {
       power_lvl = 0;
       new_power_lvl = 0;
       param_init_query = 0;
+      param_sets_loaded = false;
+      calibration_supported = false;
+      document.getElementById('force-controls').disabled = true;
       power_init_query = 0;
       p104_param_update = 0;
+      span_val = 5.7;
+      clearTimeout(loop_tid);
+      clearTimeout(loop_reply_tid);
+      loop_queue = [];
+      loop_pending = null;
+      loop_reply = '';
+      loop_sent = false;
+      loop_quiet_until = 0;
+      for(var control of document.querySelectorAll('#loop-fields button, #loop-fields input, #loop-fields select')) {
+        control.disabled = false;
+      }
+      document.getElementById('force-current').value = '4.000';
+      document.getElementById('trim-low-current').value = '4.000';
+      document.getElementById('trim-high-current').value = '20.000';
+      document.getElementById('force-status').textContent = '';
+      document.getElementById('force-status').hidden = true;
+      delete document.getElementById('force-status').dataset.langIndex;
+      delete document.getElementById('force-status').dataset.value;
+      document.getElementById('loop-message').textContent = '';
     }
 
     // Function to select the volume units to be displayed depending on p605 value
@@ -245,6 +288,9 @@ function sleep(ms) {
           p104_units = "ins";
           break;          
       }
+      for(var unit of document.querySelectorAll('.loop-distance-unit')) {
+        unit.textContent = p104_units;
+      }
     }
 
     function convert_to_measurement_units(val_to_convert) {
@@ -300,7 +346,7 @@ function sleep(ms) {
     }
 
     function trace_start() {
-      if((login_stage == 3) && (isDisconnecting == 0) && ((isTraceOn == 0) && (presysState == 2))) {
+      if((login_stage == 3) && (isDisconnecting == 0) && ((isTraceOn == 0) && (presysState >= 2))) {
         tids_trace_reset();
         // settings_clear();
         document.getElementById('btn_trace').innerHTML = lang_map[8];//'TRACE OFF';
@@ -312,12 +358,15 @@ function sleep(ms) {
         document.getElementById("trace-message").innerHTML = lang_map[104];//"Acquiring trace data. Please wait...";
         document.getElementById("home-message").innerHTML = lang_map[104];//"Acquiring trace data. Please wait...";
 			  isIgnore_2=2; // NEED TO CHECK
-        clearTimeout(p605_tid);
+        //clearTimeout(p605_tid);
         clearTimeout(echo_tid);
         clearTimeout(datem_tid);
         clearTimeout(param_tid);
-        p104_tid = setInterval(p104_start, 1000);//5000);
-        button_press = 14;
+        //p104_tid = setInterval(p104_start, 1000);//5000);
+        //param_set1_tid = setInterval(param_set1_start, 5000);
+        // Wait for navigation to settle; reuse the downloaded parameters when resuming trace polling.
+        echo_tid = setTimeout(param_sets_loaded ? echo_start : param_set1_start, 5000);
+        //button_press = 14;
       }
     }
 
@@ -337,12 +386,165 @@ function sleep(ms) {
         tids_trace_reset();
         // settings_clear();
         settings_msg_clear();
-        if(param_init_query == 0) {
+        /*if(param_init_query == 0) {
           param_start_val = 1;
           param_query = 0;
           param_tid = setInterval(param_start, 1000);
+        }*/
+      }
+    }
+
+    /**
+     * @brief Validate and queue a supported Loop parameter update.
+     * @param pnum Parameter number: 834, 835, 838, 839, 808 or 809.
+     * @return No value. Sends no command for invalid input or an unavailable connection.
+     * Does not change the stored loop-control parameters P5 or P87.
+     */
+    function loop_apply(pnum) {
+      if(![834, 835, 838, 839, 808, 809].includes(pnum)) return;
+      if(login_stage < 3 || isDisconnecting != 0) {
+        document.getElementById('loop-message').textContent = lang_map[64];
+        return;
+      }
+      if(loop_pending) return;
+      var value = document.getElementById(pnum == 808 ? 'p808List' : 'p' + pnum + '-box').value.trim();
+      var limitValue = (pnum == 834 || pnum == 835) ? convert_to_mtrs(Number(value)) : Number(value);
+      if(value !== '' && !(pnum == 808 && value == '0') &&
+         (!Number.isFinite(limitValue) ||
+          ((pnum == 834 || pnum == 835) && Math.abs(limitValue) > 100) ||
+          ((pnum == 838 || pnum == 839) && Math.abs(limitValue) > 1000) ||
+          (pnum == 809 && (limitValue < 0 || limitValue > 1000)))) {
+        document.getElementById('loop-message').textContent = lang_map[160];
+        return;
+      }
+      loop_queue = ['/P' + pnum + (value === '' || (pnum == 808 && value == '0') ? '' : ':' + Number(value))];
+      param_update();
+      isIgnore = 0;
+      loop_next();
+    }
+
+    /**
+     * @brief Validate and queue a Bluetooth loop-current calibration command.
+     * @param command Operation number: 40 (force), 45/46 (trim), or 83 (clear user trims).
+     * @return No value. Reports invalid input or an unavailable connection without sending.
+     * Requires a received P926 value of 319 or higher before enabling calibration writes.
+     * Pauses polling and refreshes both user trims after a successful trim or clear operation.
+     * The firmware checks that the corresponding fixed output has settled before trimming.
+     */
+    function loop_calibrate(command) {
+      if(![40, 45, 46, 83].includes(command)) return;
+      if(login_stage < 3 || isDisconnecting != 0) {
+        document.getElementById('loop-message').textContent = lang_map[64];
+        return;
+      }
+      if(!calibration_supported) {
+        document.getElementById('loop-message').textContent = lang_map[174];
+        return;
+      }
+      if(loop_pending) return;
+      var value = 0;
+      if(command != 83) {
+        var input = document.getElementById(command == 40 ? 'force-current' : command == 45 ? 'trim-low-current' : 'trim-high-current');
+        value = Number(input.value);
+        var minimum = command == 46 ? 18 : 3.5;
+        var maximum = command == 45 ? 6 : command == 46 ? 22 : 23;
+        // A nonzero value that underflows must never become a command to restore dynamic output.
+        if(input.value.trim() === '' || !Number.isFinite(value) ||
+           (!(command == 40 && value === 0) && (value < minimum || value > maximum)) ||
+           (value === 0 && /[1-9]/.test(input.value.split(/[eE]/)[0]))) {
+          document.getElementById('loop-message').textContent = command == 40 ? lang_map[166] :
+            lang_map[167].replace('{min}', minimum.toFixed(3)).replace('{max}', maximum.toFixed(3));
+          return;
         }
       }
+      loop_queue = ['/H' + command + (command == 83 ? '' : ':' + (value === 0 ? '0' : value.toFixed(3)))];
+      // Either trim calculation can change both coefficients; refresh only after explicit calibration.
+      if(command != 40) loop_queue.push('/P838', '/P839');
+      param_update();
+      isIgnore = 0;
+      loop_next();
+    }
+
+    /**
+     * @brief Send the next queued Loop command and wait for its firmware response.
+     * @return No value. Locks Loop controls until completion and starts a response timeout.
+     */
+    function loop_next() {
+      clearTimeout(loop_tid);
+      clearTimeout(loop_reply_tid);
+      loop_reply = '';
+      loop_sent = false;
+      loop_pending = loop_queue.shift() || null;
+      for(var control of document.querySelectorAll('#loop-fields button, #loop-fields input, #loop-fields select')) {
+        control.disabled = loop_pending !== null;
+      }
+      if(!loop_pending) {
+        document.getElementById('loop-message').textContent = lang_map[161];
+        return;
+      }
+      document.getElementById('loop-message').textContent = lang_map[162].replace('{parameter}', loop_pending.split(':')[0].slice(1));
+      loop_send_deadline = Date.now() + 5000;
+      loop_send();
+    }
+
+    /**
+     * @brief Send the pending Loop command after outstanding trace traffic has drained.
+     * @return No value. Defers the write until the link is quiet, then starts the reply timeout.
+     * Aborts on disconnect or persistent trace traffic; never retries a calibration write.
+     */
+    function loop_send() {
+      if(!loop_pending) return;
+      // Recheck capability before a deferred write in case the connected firmware has changed.
+      if(loop_pending.startsWith('/H') && !calibration_supported) {
+        loop_failed(lang_map[174]);
+        return;
+      }
+      if(!device || !device.gatt.connected || isDisconnecting != 0) {
+        loop_failed(lang_map[64]);
+        return;
+      }
+      var wait = loop_quiet_until - Date.now();
+      if(wait > 0) {
+        if(Date.now() >= loop_send_deadline) {
+          loop_failed(lang_map[171]);
+          return;
+        }
+        loop_tid = setTimeout(loop_send, Math.min(wait, loop_send_deadline - Date.now()));
+        return;
+      }
+      loop_sent = true;
+      loop_tid = setTimeout(loop_failed, 5000);
+      sendAT(loop_pending);
+    }
+
+    /**
+     * @brief Abort a Loop transaction after an error, timeout or navigation away.
+     * @return No value. Drops unsent commands and unlocks the parameter controls.
+     * Does not change the device output or retry a command with an unconfirmed outcome.
+     * @param message Optional error text; omitted for timeout or navigation cancellation.
+     */
+    function loop_failed(message) {
+      clearTimeout(loop_tid);
+      clearTimeout(loop_reply_tid);
+      if(!message && loop_pending) {
+        var start = loop_reply.lastIndexOf(loop_pending.split(':')[0] + ':');
+        var reply = start < 0 ? '' : loop_reply.slice(start).replace(/\0/g, '').trim();
+        if(/^\/H\d+:ERR:?$/.test(reply)) {
+          message = lang_map[170].replace('{command}', loop_pending.split(':')[0]);
+        } else if(loop_sent && /^\/H\d+/.test(loop_pending)) {
+          message = (reply ? lang_map[172].replace('{reply}', reply) : lang_map[173])
+            .replace('{command}', loop_pending.split(':')[0]);
+        }
+      }
+      if(message) log(message);
+      loop_queue = [];
+      loop_pending = null;
+      loop_reply = '';
+      loop_sent = false;
+      for(var control of document.querySelectorAll('#loop-fields button, #loop-fields input, #loop-fields select')) {
+        control.disabled = false;
+      }
+      document.getElementById('loop-message').textContent = message || lang_map[163];
     }
 
     function param_start() {
@@ -412,8 +614,11 @@ function sleep(ms) {
     // no need to recall the function (it's an interval, it'll loop forever)
     if(login_stage == 4) { // TRACE ON state
         clearTimeout(echo_tid);
-        clearTimeout(p104_tid);
-        clearTimeout(p605_tid);
+        //clearTimeout(p104_tid);
+        //clearTimeout(p605_tid);
+        clearTimeout(param_set1_tid);
+        clearTimeout(param_set2_tid);
+        clearTimeout(param_set3_tid);
         clearTimeout(param_tid);  
         sendAT('GET ECHO');
         document.getElementById("trace-message").innerHTML = lang_map[113];//"Acquiring ECHO data. Please wait...";
@@ -432,8 +637,11 @@ function sleep(ms) {
     function datem_start() {
         if(login_stage == 4) { // TRACE ON state
             clearTimeout(datem_tid);
-            clearTimeout(p104_tid);
-            clearTimeout(p605_tid);
+            //clearTimeout(p104_tid);
+            //clearTimeout(p605_tid);
+            clearTimeout(param_set1_tid);
+            clearTimeout(param_set2_tid);
+            clearTimeout(param_set3_tid);
             clearTimeout(param_tid);
             sendAT('GET DATEM');
             document.getElementById("trace-message").innerHTML = lang_map[114];//"Acquiring DATEM data. Please wait...";
@@ -489,8 +697,79 @@ function sleep(ms) {
         }      
     }
 
+    function param_set1_start() {
+      if(login_stage == 4) {
+            //clearTimeout(p605_tid);
+            clearTimeout(param_set1_tid);
+            clearTimeout(param_set2_tid);
+            clearTimeout(param_set3_tid);
+            clearTimeout(echo_tid);
+            clearTimeout(datem_tid);
+            clearTimeout(param_tid);
+            sendAT('SENDPART1');
+            document.getElementById("trace-message").innerHTML = lang_map[146];//"Querying P104. Please wait...";
+            document.getElementById("home-message").innerHTML = lang_map[146];//"Querying P104. Please wait...";
+            button_press = 16;
+            // p104_tid = setInterval(p104_start, 5000);
+            param_set1_tid = setInterval(param_set1_start, 5000);
+
+        } else {
+            // clearTimeout(p104_tid);
+            // clearTimeout(p605_tid);
+            // clearTimeout(echo_tid);
+            // clearTimeout(datem_tid);
+            tids_trace_reset();
+        }          
+    }
+
+    function param_set2_start() {
+      if(login_stage == 4) {
+            //clearTimeout(p605_tid);
+            clearTimeout(param_set1_tid);
+            clearTimeout(param_set3_tid);
+            clearTimeout(echo_tid);
+            clearTimeout(datem_tid);
+            clearTimeout(param_tid);
+            sendAT('SENDPART2');
+            document.getElementById("trace-message").innerHTML = lang_map[147];//"Querying P104. Please wait...";
+            document.getElementById("home-message").innerHTML = lang_map[147];//"Querying P104. Please wait...";
+            button_press = 17;
+            // p104_tid = setInterval(p104_start, 5000);
+        } else {
+            // clearTimeout(p104_tid);
+            // clearTimeout(p605_tid);
+            // clearTimeout(echo_tid);
+            // clearTimeout(datem_tid);
+            tids_trace_reset();
+        }          
+    }
+
+    function param_set3_start() {
+      if(login_stage == 4) {
+            //clearTimeout(p605_tid);
+            clearTimeout(param_set1_tid);
+            clearTimeout(param_set2_tid);
+            clearTimeout(echo_tid);
+            clearTimeout(datem_tid);
+            clearTimeout(param_tid);
+            sendAT('SENDPART3');
+            document.getElementById("trace-message").innerHTML = lang_map[148];//"Querying P104. Please wait...";
+            document.getElementById("home-message").innerHTML = lang_map[148];//"Querying P104. Please wait...";
+            button_press = 18;
+            // p104_tid = setInterval(p104_start, 5000);
+        } else {
+            // clearTimeout(p104_tid);
+            // clearTimeout(p605_tid);
+            // clearTimeout(echo_tid);
+            // clearTimeout(datem_tid);
+            tids_trace_reset();
+        }          
+    }
+
     function trace_button_check() {
       //log("trace_button_check :"+login_stage);
+        // A delayed start must not restart acquisition while a parameter tab is displayed.
+        if(sysState >= 2) return;
         if(login_stage == 3 /*|| login_stage == 1*/ || login_stage == 2) {
           if(isDisconnecting == 0){
               //log(' → Getting trace data');//log(' <- TRACE ON');
@@ -507,12 +786,16 @@ function sleep(ms) {
               document.getElementById("trace-message").innerHTML = lang_map[104];//"Acquiring trace data. Please wait...";
               document.getElementById("home-message").innerHTML = lang_map[104];//"Acquiring trace data. Please wait...";
 			        isIgnore_2=2; // NEED TO CHECK
-              clearTimeout(p605_tid);
+              //clearTimeout(p605_tid);
+              //clearTimeout(param_set1_tid);
+              clearTimeout(param_set2_tid);
+              clearTimeout(param_set3_tid);
               clearTimeout(echo_tid);
               clearTimeout(datem_tid);
               clearTimeout(param_tid);
-              p104_tid = setInterval(p104_start, 1000);//5000);
-              button_press = 14;
+              //p104_tid = setInterval(p104_start, 1000);//5000);
+              param_set1_tid = setInterval(param_set1_start, 500);
+              //button_press = 14;
           }
         } else {
           log(lang_map[64]);//log('Device not in Normal mode!');//log('Device not in passthrough mode!');          
@@ -533,8 +816,11 @@ function sleep(ms) {
         }
         else if (login_stage == 2) { // currently in AT mode
           login_stage = 3;
-          clearTimeout(p104_tid);
-          clearTimeout(p605_tid);
+          //clearTimeout(p104_tid);
+          //clearTimeout(p605_tid);
+          clearTimeout(param_set1_tid);
+          clearTimeout(param_set2_tid);
+          clearTimeout(param_set3_tid);
           clearTimeout(echo_tid);
           clearTimeout(datem_tid);
           clearTimeout(param_tid);
@@ -552,13 +838,19 @@ function sleep(ms) {
     function tids_trace_reset() {
       login_stage = 3; // back to the PT mode
       document.getElementById('btn_trace').innerHTML = lang_map[9];//'TRACE ON';
-      clearTimeout(p104_tid);
-      clearTimeout(p605_tid);
+      //clearTimeout(p104_tid);
+      //clearTimeout(p605_tid);
+      clearTimeout(param_set1_tid);
+      clearTimeout(param_set2_tid);
+      clearTimeout(param_set3_tid);
       clearTimeout(echo_tid);
       clearTimeout(datem_tid);
       clearTimeout(param_tid);
-      p104_tid = false;
-      p605_tid = false;
+      //p104_tid = false;
+      //p605_tid = false;
+      param_set1_tid = false;
+      param_set2_tid = false;
+      param_set3_tid = false;
       echo_tid = false;
       datem_tid = false;
       param_tid = false;
@@ -586,8 +878,11 @@ function sleep(ms) {
           // start the static timers
           document.getElementById('btn_trace').innerHTML = lang_map[8];//'TRACE OFF';
           login_stage = 3;
-          clearTimeout(p104_tid);
-          clearTimeout(p605_tid);
+          //clearTimeout(p104_tid);
+          //clearTimeout(p605_tid);
+          clearTimeout(param_set1_tid);
+          clearTimeout(param_set2_tid);
+          clearTimeout(param_set3_tid);
           clearTimeout(echo_tid);
           clearTimeout(datem_tid);
           clearTimeout(param_tid);
@@ -632,10 +927,78 @@ function sleep(ms) {
       }
     }
 
+    function getVal(i) {
+      //param_val[i] = parseInt(hexToFloat('0x' + ('00' + s.getUint8(4*i).toString(16)).slice(-2) + ('00' + s.getUint8(4*i + 1).toString(16)).slice(-2) + ('00' + s.getUint8(4*i + 2).toString(16)).slice(-2) + ('00' + s.getUint8(4*i + 3).toString(16)).slice(-2)));
+      //return (param_val[i]);
+      return(hexToFloat('0x' + ('00' + s.getUint8(4*i).toString(16)).slice(-2) + ('00' + s.getUint8(4*i + 1).toString(16)).slice(-2) + ('00' + s.getUint8(4*i + 2).toString(16)).slice(-2) + ('00' + s.getUint8(4*i + 3).toString(16)).slice(-2)));
+    }
+
+    function param_verify(i) {
+      switch (param_num[offset*60 + i]) {
+        case 241:
+          document.getElementById('p241List').value = parseInt(getVal(i) + 1); // Fix bug #385
+          //console.log(document.getElementById('p241List').value);
+          if((document.getElementById('p241List').value >=2) && (document.getElementById('p241List').value <=4))
+            alert(lang_map[85]);
+          break;
+        case 100:
+          document.getElementById('p100List').value = parseInt(getVal(i));
+          break;
+        case 101:
+          break;
+        case 104:
+          document.getElementById('p104List').value = parseInt(getVal(i));
+          p104_units_val = parseInt(document.getElementById('p104List').value);
+          p104_measurement_units();  // Update the measurement units to be displayed
+          break;
+        case 105:
+          document.getElementById('p105-box').value = getVal(i).toFixed(3);
+          break;
+        case 106:
+          document.getElementById('p106-box').value = getVal(i).toFixed(3);
+          span_val = document.getElementById('p106-box').value;
+          break;
+        case 107:
+          near_blanking_var = getVal(i).toFixed(3);
+          break;
+        case 108:
+          far_blanking_var = getVal(i).toFixed(3);
+          break;          
+        case 808:
+          document.getElementById('p808List').value = parseInt(getVal(i));
+          break;
+        case 834:
+        case 835:
+        case 838:
+        case 839:
+        case 809:
+          document.getElementById('p' + param_num[offset*60 + i] + '-box').value = getVal(i).toFixed(3);
+          break;
+        case 605:
+          document.getElementById('p605List').value = parseInt(getVal(i)) + 1;
+          p605_units_val = parseInt(document.getElementById('p605List').value) - 1;
+          p605_volume_units();  // Update the volume units to be displayed
+          break;
+        case 21:
+          document.getElementById('p21-box').value = getVal(i).toFixed(3);
+          break;
+        case 586:
+          temperature_var = getVal(i);
+          break;
+        case 926:
+          // Read the float directly so invalid NaN/Infinity values cannot enable calibration.
+          var firmwareVersion = s.getFloat32(i * 4);
+          calibration_supported = Number.isFinite(firmwareVersion) && firmwareVersion >= 319;
+          document.getElementById('force-controls').disabled = !calibration_supported;
+          break;
+        default:
+          break;        
+      }
+    }
 
     const utf8encoder = new TextEncoder();
     const windows1251 = new TextEncoder();
-    var deviceName;//='REFLECT';
+    var deviceName;//='PULSAR REFLECT™';
     function utf8ToHex(s)
     {
       const rb = utf8encoder.encode(s);
@@ -665,19 +1028,20 @@ function sleep(ms) {
     }
 
     // Function to convert unsigned int 8 bit format to hex and relevant functions within it
-    function Uint8tohex(s)
+    function Uint8tohex(incoming_data)
     {
-      let a = [];     
+      a = [];
+      s = incoming_data;     
       var check;
       var floatval;
-      const doc_value = document.getElementById('cmd').value;
+      const doc_value = CommandSent;//document.getElementById('cmd').value;
       for (let i = 0; i < s.byteLength; i++) {
         check = s.getUint8(i);
-        if((i >= 46) && (i < 246) && (((doc_value == "GET ECHO") && (button_press == 8)) || (button_press == 10))) // Changed from (i >= 42) && (i < 242)
+        if((i >= 46) && (i < 246) && (doc_value == "GET ECHO"))//(((doc_value == "GET ECHO") && (button_press == 8)) || (button_press == 10))) // Changed from (i >= 42) && (i < 242)
         {
           echo[i-46] = check*1000/255;  // Changed from echo[i-42]
         }
-        else if((i >= 46) && (i < 246) && (((doc_value == "GET DATEM") && (button_press == 8)) || (button_press == 11)))  // Changed from (i >= 42) && (i < 242)
+        else if((i >= 46) && (i < 246) && (doc_value == "GET DATEM"))//(((doc_value == "GET DATEM") && (button_press == 8)) || (button_press == 11)))  // Changed from (i >= 42) && (i < 242)
         {
           datem[i-46] = check*1000/255; // Changed from datem[i-42]
         }
@@ -686,7 +1050,7 @@ function sleep(ms) {
       }
  
       
-      if((((doc_value == "GET ECHO") || (doc_value == "GET DATEM") && (button_press == 8)) || (button_press == 10) || (button_press == 11)) && (s.byteLength == 246)) {
+      if((((doc_value == "GET ECHO") || (doc_value == "GET DATEM") /*&& (button_press == 8)*/) /*|| (button_press == 10) || (button_press == 11)*/) && (s.byteLength == 246)) {
         // Populate the dynamic variables
         level_var = hexToFloat('0x' + ('00' + s.getUint8(0).toString(16)).slice(-2) + ('00' + s.getUint8(1).toString(16)).slice(-2) + ('00' + s.getUint8(2).toString(16)).slice(-2) + ('00' + s.getUint8(3).toString(16)).slice(-2));
         distance_var = hexToFloat('0x' + ('00' + s.getUint8(4).toString(16)).slice(-2) + ('00' + s.getUint8(5).toString(16)).slice(-2) + ('00' + s.getUint8(6).toString(16)).slice(-2) + ('00' + s.getUint8(7).toString(16)).slice(-2));
@@ -703,7 +1067,9 @@ function sleep(ms) {
         near_blanking_var = hexToFloat('0x' + ('00' + s.getUint8(34).toString(16)).slice(-2) + ('00' + s.getUint8(35).toString(16)).slice(-2) + ('00' + s.getUint8(36).toString(16)).slice(-2) + ('00' + s.getUint8(37).toString(16)).slice(-2)); //hexToFloat('0x' + ('00' + s.getUint8(42).toString(16)).slice(-2) + ('00' + s.getUint8(43).toString(16)).slice(-2) + ('00' + s.getUint8(44).toString(16)).slice(-2) + ('00' + s.getUint8(45).toString(16)).slice(-2));
         far_blanking_var = hexToFloat('0x' + ('00' + s.getUint8(38).toString(16)).slice(-2) + ('00' + s.getUint8(39).toString(16)).slice(-2) + ('00' + s.getUint8(40).toString(16)).slice(-2) + ('00' + s.getUint8(41).toString(16)).slice(-2));  //hexToFloat('0x' + ('00' + s.getUint8(46).toString(16)).slice(-2) + ('00' + s.getUint8(47).toString(16)).slice(-2) + ('00' + s.getUint8(48).toString(16)).slice(-2) + ('00' + s.getUint8(49).toString(16)).slice(-2));  
         empty_distance = hexToFloat('0x' + ('00' + s.getUint8(42).toString(16)).slice(-2) + ('00' + s.getUint8(43).toString(16)).slice(-2) + ('00' + s.getUint8(44).toString(16)).slice(-2) + ('00' + s.getUint8(45).toString(16)).slice(-2));    //hexToFloat('0x' + ('00' + s.getUint8(50).toString(16)).slice(-2) + ('00' + s.getUint8(51).toString(16)).slice(-2) + ('00' + s.getUint8(52).toString(16)).slice(-2) + ('00' + s.getUint8(53).toString(16)).slice(-2));
-        compensated_var_m = convert_to_mtrs(compensated_var);        
+        compensated_var_m = convert_to_mtrs(compensated_var);
+/*
+        // Not use mode_var any more.
         if(Math.round(compensated_var_m) == 24.0)
         {
           mode_var = 20.0;
@@ -716,11 +1082,12 @@ function sleep(ms) {
         {
           mode_var = 40.0;
         }
+*/
         far_blanking_dist = empty_distance * (100.0 + far_blanking_var)/100.0;
         near_blanking_var = convert_to_measurement_units(near_blanking_var);
         far_blanking_dist = convert_to_measurement_units(far_blanking_dist);
         empty_distance = convert_to_measurement_units(empty_distance);
-        mode_var = convert_to_measurement_units(mode_var);
+        //mode_var = convert_to_measurement_units(mode_var);  // not used
 
         var xdata = [];
         xdata[0] = 0.00;
@@ -728,9 +1095,49 @@ function sleep(ms) {
         {
           xdata[i] = Math.round((xdata[i - 1] + (compensated_var/200))*1000)/1000;
         }
+        // Zooming out does not work if labels are numbers
+        for (let i = 0; i <= 200; i++)
+        {
+          xdata[i] = xdata[i].toString();
+        }
         myChart.data.labels = xdata;
         myChart.config.options.scales.x.title.text = p104_units;
         myChart.update();
+      }
+      else if (doc_value == "SENDPART1")//(((doc_value == "SENDPART1") && (button_press == 8)) || (button_press == 16))
+      {
+        offset = 0;
+        for (let i = 0; i < 60; i++) {
+            param_verify(i);          
+        }
+        //console.log("Got Part1");
+        // Retain late replies, but do not continue querying after navigation has paused acquisition.
+        if(login_stage == 4 && isDisconnecting == 0) {
+          param_set2_start();
+          param_set2_tid = setInterval(param_set2_start, 5000);
+        }
+      }
+      else if (doc_value == "SENDPART2")//(((doc_value == "SENDPART2") && (button_press == 8)) || (button_press == 17))
+      {
+        offset = 1;
+        for (let i = 0; i < 60; i++) {
+            param_verify(i);          
+        }
+        //console.log("Got Part2");
+        if(login_stage == 4 && isDisconnecting == 0) {
+          param_set3_start();
+          param_set3_tid = setInterval(param_set3_start, 5000);
+        }
+      }
+      else if (doc_value == "SENDPART3")//(((doc_value == "SENDPART3") && (button_press == 8)) || (button_press == 18))
+      {
+        offset = 2;
+        for (let i = 0; i < (param_info.length - offset*60); i++) {
+            param_verify(i);          
+        }
+        //console.log("Got Part3");
+        param_sets_loaded = true;
+        if(login_stage == 4 && isDisconnecting == 0) echo_start();
       }
       return a;
     }
@@ -838,6 +1245,46 @@ function sleep(ms) {
     }
 
     function populate_params(string_val){
+      var calibrationReply = string_val.match(/\/H(40|45|46|83):(OK|ERR:(\d+))(?=[\s\0]|$)/);
+      if(calibrationReply && loop_pending && loop_pending.split(':')[0] === '/H' + calibrationReply[1]) {
+        if(calibrationReply[2] !== 'OK') {
+          var message = lang_map[168].replace('{command}', '/H' + calibrationReply[1]).replace('{code}', calibrationReply[3]);
+          if(calibrationReply[3] === '9') message += ' ' + lang_map[169];
+          loop_failed(message);
+        } else {
+          if(calibrationReply[1] === '40') {
+            var fixedCurrent = Number(loop_pending.split(':')[1]);
+            document.getElementById('force-status').dataset.langIndex = fixedCurrent === 0 ? '165' : '164';
+            document.getElementById('force-status').dataset.value = fixedCurrent.toFixed(3);
+            document.getElementById('force-status').textContent = fixedCurrent === 0 ? lang_map[165] :
+              lang_map[164].replace('{value}', fixedCurrent.toFixed(3));
+            document.getElementById('force-status').hidden = false;
+          } else {
+            // Mark cached trims unknown until both readbacks have confirmed the saved coefficients.
+            document.getElementById('p838-box').value = '';
+            document.getElementById('p839-box').value = '';
+          }
+          loop_next();
+        }
+        return;
+      }
+      var loopReply = string_val.match(/\/P(\d+):(-?\d+(?:\.\d+)?)(?=[\s\0]|$)/);
+      if(string_val.includes('/P926:')) {
+        var firmwareVersion = loopReply && Number(loopReply[1]) === 926 ? Number(loopReply[2]) : NaN;
+        calibration_supported = Number.isFinite(firmwareVersion) && firmwareVersion >= 319;
+        document.getElementById('force-controls').disabled = !calibration_supported;
+      }
+      if(loop_pending && /\bNO\b|ERROR|restricted|read.only|out of range/i.test(string_val)) {
+        loop_failed();
+        return;
+      }
+      if(loopReply) {
+        var loopNumber = Number(loopReply[1]);
+        var loopValue = Number(loopReply[2]);
+        if([834, 835, 838, 839, 809].includes(loopNumber)) {
+          document.getElementById('p' + loopNumber + '-box').value = loopValue.toFixed(3);
+        }
+      }
       if(string_val.includes("/P241:")) {             
         document.getElementById('p241List').value = parseInt(string_val.slice(string_val.lastIndexOf(':') + 1)) + 1;
         param_query = 1;
@@ -863,9 +1310,13 @@ function sleep(ms) {
         p104_measurement_units();  // Update the measurement units to be displayed
         if((param_start_val == 0) || (param_tid == false))
           settings_msg_clear();
+        /*
         if(isTraceOn == 1) {
           //sendAT('/P605');
-          clearTimeout(p104_tid);
+          //clearTimeout(p104_tid);
+          clearTimeout(param_set1_tid);
+          clearTimeout(param_set2_tid);
+          clearTimeout(param_set3_tid);
           clearTimeout(echo_tid);
           clearTimeout(datem_tid);
           clearTimeout(param_tid);
@@ -873,7 +1324,7 @@ function sleep(ms) {
           document.getElementById("home-message").innerHTML = lang_map[111];//"Querying P605. Please wait...";
           p605_tid = setInterval(p605_start, 1000);//5000);
           button_press = 14;
-        } else if (p104_param_update == 1)
+        } else */if (p104_param_update == 1)
           p104_update();
         param_query = 3;
         document.getElementById("btnp104").style.background = '#33B34A';   //PULSAR GREEN
@@ -887,6 +1338,7 @@ function sleep(ms) {
       }
       else if(string_val.includes("/P106:")) {
         document.getElementById('p106-box').value = string_val.slice(string_val.lastIndexOf(':') + 1);//string_val.substring(string_val.indexOf(':') + 1);
+        span_val = document.getElementById('p106-box').value;
         param_query = 5;
         if((param_start_val == 0) || (param_tid == false))
           settings_msg_clear();
@@ -912,20 +1364,25 @@ function sleep(ms) {
         p605_volume_units();  // Update the volume units to be displayed
         if((param_start_val == 0) || (param_tid == false))
           settings_msg_clear();
+        /*
         if(isTraceOn == 1) {
 
           // sendAT('GET ECHO');
           // button_press = 10;
           // datem_tid = setInterval(datem_start, 5000);
-          clearTimeout(p605_tid);
+          //clearTimeout(p605_tid);
           clearTimeout(datem_tid);
-          clearTimeout(p104_tid);
+          //clearTimeout(p104_tid);
           clearTimeout(param_tid);
+          clearTimeout(param_set1_tid);
+          clearTimeout(param_set2_tid);
+          clearTimeout(param_set3_tid);
           document.getElementById("trace-message").innerHTML = lang_map[113];//"Acquiring ECHO data. Please wait...";
           document.getElementById("home-message").innerHTML = lang_map[113];//"Acquiring ECHO data. Please wait...";
           echo_tid = setInterval(echo_start, 1000);//5000);
 
         }
+        */
         param_query = 7;
         document.getElementById("btnp605").style.background = '#33B34A';   //PULSAR GREEN
       }
@@ -934,19 +1391,60 @@ function sleep(ms) {
         param_query = 8;
         param_start_val = 0;
         settings_msg_clear();
+        trace_msg_clear();
         document.getElementById("btnp21").style.background = '#33B34A';   //PULSAR GREEN
+      }
+      if(loop_pending && loopReply && loop_pending.split(':')[0] === '/P' + loopReply[1]) {
+        loop_next();
       }
     }
 
 
 // Incoming GATT notification was received
 async function incomingData(event){
+      const doc_value = CommandSent; // Keep the command associated with this read, even if a new write follows.
       // Read data from BLE CodeLess peer
-      let readInValue = await outboundChar.readValue();
+      let readInValue;
+      try {
+        readInValue = await outboundChar.readValue();
+      } catch(error) {
+        if(loop_pending) loop_failed(lang_map[78] + error);
+        else log(lang_map[78] + error);
+        return;
+      }
+      // Remove only the extra firmware terminator, preserving zero-valued bytes inside a trace payload.
+      if((doc_value === 'GET ECHO' || doc_value === 'GET DATEM') &&
+         readInValue.byteLength === 247 && readInValue.getUint8(246) === 0x00) {
+        readInValue = new DataView(readInValue.buffer, readInValue.byteOffset, 246);
+      }
       let decoder = new TextDecoder('utf-8');
       // var checkBox = document.getElementById("myCheck");
-      const doc_value = document.getElementById('cmd').value;
       const string_check =  decoder.decode(readInValue).replace('\r','\r ← ').replace('\n','').replace('\0','');
+      if(sysState >= 2 && !loop_sent && /^(GET ECHO|GET DATEM|SENDPART[123])$/.test(doc_value)) {
+        // Stopping polling does not cancel a trace frame already travelling through the BT module.
+        loop_quiet_until = Math.max(loop_quiet_until, Date.now() + 200);
+        if(!loop_pending && /^(GET ECHO|GET DATEM)$/.test(doc_value)) return;
+      }
+      if(loop_pending) {
+        if(!loop_sent) {
+          loop_quiet_until = Math.max(loop_quiet_until, Date.now() + 200);
+          return;
+        }
+        // CodeLess can split a reply across reads or append it to the tail of an older binary frame.
+        loop_reply = (loop_reply + decoder.decode(readInValue)).slice(-1024);
+        clearTimeout(loop_reply_tid);
+        loop_reply_tid = setTimeout(() => {
+          if(!loop_pending || !loop_sent) return;
+          var start = loop_reply.lastIndexOf(loop_pending.split(':')[0] + ':');
+          var reply = start < 0 ? loop_reply : loop_reply.slice(start);
+          reply = reply.replace(/\0/g, '').trim();
+          // Show incomplete acknowledgements too, so a missing final character is visible in DATA LOG.
+          if(reply && (/^\/[HP]\d+:/.test(reply) || (reply.length <= 128 && /^[\x20-\x7e\r\n]+$/.test(reply))))
+            log(' ← ' + reply);
+          populate_params(reply);
+        }, 200);
+        return;
+      }
       //alert("button_press="+button_press+" readInValue="+readInValue+"login_stage="+login_stage+" string_check="+string_check);
       //alert(login_stage + " " +isIgnore);
       // alert(string_check + "1");
@@ -970,10 +1468,16 @@ async function incomingData(event){
           return; //--> need to check
       }
 
+      if(/\/H\d+:(?:OK|ERR:)/.test(string_check)) {
+        // Calibration acknowledgements must not be interpreted as Bluetooth power-level replies.
+        populate_params(string_check);
+        log(' ← ' + string_check);
+        return;
+      }
      
 
       //alert(string_check + "2");
-      if ((button_press == 10) || (button_press == 11) || ((button_press == 8) && ((doc_value == "GET ECHO") || (doc_value == "GET DATEM"))))
+      if (/*(button_press == 10) || (button_press == 11) || (button_press == 16) || (button_press == 17) || (button_press == 18) ||*/ (/*(button_press == 8) &&*/ ((doc_value == "GET ECHO") || (doc_value == "GET DATEM") || (doc_value == "SENDPART1") || (doc_value == "SENDPART2") || (doc_value == "SENDPART3"))))
       {
         var hex = Uint8tohex(readInValue);
         // if((button_press == 10) || ((button_press == 8) && (doc_value == "GET ECHO")))
@@ -1025,7 +1529,7 @@ async function incomingData(event){
         }
         else{
           var disp=0;
-          if((button_press >=20) && (button_press <=26) || (string_check.includes("/P")))
+          if(loop_pending || (button_press >=20) && (button_press <=26) || (string_check.includes("/P")))
             populate_params(string_check);
           //alert(string_check+"st");
           if( (isTerminated === 1) || (isDisconnecting === 1) || (isDisconnecting === 2) ){
@@ -1197,7 +1701,7 @@ async function incomingData(event){
       if(isIgnore_2 == 1 || isDisconnecting == 2){
         return;
       }
-
+      CommandSent = cmd;
       if(cmd === 'AT+PT=1'){
           log(lang_map[75]);//log(' → Logging ...'   );
           await sleep(2 * 1000); // needed 
@@ -1236,8 +1740,10 @@ async function incomingData(event){
           log('');
           log(lang_map[79]);////log('Requesting Bluetooth Device...');
           device = await navigator.bluetooth.requestDevice(options);
+          calibration_supported = false;
+          document.getElementById('force-controls').disabled = true;
           log(lang_map[80] + device.name);////log('Name: ' + device.name);
-          deviceName=lang_map[0] + ':';/*'REFLECT: '+ '\n' + device.name;*/
+          deviceName=lang_map[0] + ':';/*'PULSAR REFLECT™: '+ '\n' + device.name;*/
           document.getElementById('id_title').innerHTML =deviceName;
           document.getElementById('device_title').innerHTML =device.name;
           document.getElementById('deviceName-box').value = device.name;
@@ -1266,6 +1772,11 @@ async function incomingData(event){
 
 // Send an AT command to the CodeLess BLE peer
 async function sendAT(cmd) {
+      if(/^(GET ECHO|GET DATEM|SENDPART[123])$/.test(cmd)) {
+        // A 246-byte trace takes over one second at 2400 baud; allow time for BT delivery as well.
+        loop_quiet_until = Date.now() + 2000;
+      }
+      CommandSent = cmd;
       if (cmd === 'AT+PWRLVL')
         cmd_sent = "AT+PWRLVL";
       else if (cmd.includes("AT+PWRLVL="))
@@ -1284,7 +1795,7 @@ async function sendAT(cmd) {
         let cmd1 = pwd.replace(/[0-9]/g, "*");
         log(' → /ACCESS:' + cmd1);
       }
-      else if ((cmd != "GET ECHO") && (cmd != "GET DATEM") && !((isTraceOn == 1) && ((cmd == "/P104") || (cmd == "/P605")))) {
+      else if ((cmd != "GET ECHO") && (cmd != "GET DATEM") && (cmd != "SENDPART1") && (cmd != "SENDPART2") && (cmd != "SENDPART3") && !((isTraceOn == 1) && ((cmd == "/P104") || (cmd == "/P605")))) {
         if((cmd_sent == "AT+PWRLVL") && (power_init_query == 0))
           log(lang_map[82]);//log(' → Checking bluetooth power level');
         else
@@ -1481,6 +1992,7 @@ async function sendAT(cmd) {
       if((login_stage >= 2) && (isDisconnecting == 0)) {
         tids_trace_reset();
         isIgnore=0;
+        var alphanumericPattern=/^[A-za-z0-9]+$/; // alphanumericPattern to poll the Input String
         switch(button_press) {
           case 28:
             if(document.getElementById("deviceName-box").value == "") {            
@@ -1492,6 +2004,10 @@ async function sendAT(cmd) {
                 alert(lang_map[88]);//alert('Device Name can only have a maximum of 4 alphanumeric characters!');
                 settings_msg_clear();
               }
+            else if(!alphanumericPattern.test(document.getElementById("deviceName-box").value)){
+              alert(lang_map[145]); // alert(Please enter A-Z,a-z,0-9! Device Name can not contain special characters!)
+              settings_msg_clear();
+            }
               else {
                 document.getElementById("settings-message").innerHTML = lang_map[144];//"Setting new Bluetooth device name. Please wait...";
                 document.getElementById("btndeviceName").style.background = '#FFCE34';   //PULSAR YELLOW
@@ -1591,6 +2107,7 @@ async function sendAT(cmd) {
             }
             else {
               //sendAT('/P100:'+ document.getElementById("p100-box").value);
+              param_sets_loaded = false;
               sendAT('/P100:'+ list_value.toString());
               document.getElementById("settings-message").innerHTML = lang_map[118];//"Updating P100. Please wait...";
             }      
@@ -1606,6 +2123,7 @@ async function sendAT(cmd) {
             }
             else {
               //sendAT('/P104:'+ document.getElementById("p104-box").value);
+              param_sets_loaded = false;
               sendAT('/P104:'+ list_value.toString());
               document.getElementById("settings-message").innerHTML = lang_map[119];//"Updating P104. Please wait...";
               p104_param_update = 1;
@@ -1619,6 +2137,7 @@ async function sendAT(cmd) {
               document.getElementById("settings-message").innerHTML = lang_map[108];//"Querying P105. Please wait...";
             }
             else {
+              param_sets_loaded = false;
               sendAT('/P105:'+ document.getElementById("p105-box").value);
               document.getElementById("settings-message").innerHTML = lang_map[120];//"Updating P105. Please wait...";
             }
@@ -1631,26 +2150,15 @@ async function sendAT(cmd) {
               document.getElementById("settings-message").innerHTML = lang_map[109];//"Querying P106. Please wait...";
             }
             else {
+              param_sets_loaded = false;
               sendAT('/P106:'+ document.getElementById("p106-box").value);  
               document.getElementById("settings-message").innerHTML = lang_map[121];//"Updating P106. Please wait...";
             }          
             document.getElementById("p106-box").value = "";
             break;
           case 24:
-            document.getElementById("btnp808").style.background = '#FFCE34';   //PULSAR YELLOW
-            //if(document.getElementById("p808-box").value == "")
-            list_value = document.getElementById("p808List").value;
-            if(list_value == 0) {
-              sendAT('/P808');
-              document.getElementById("settings-message").innerHTML = lang_map[110];//"Querying P808. Please wait...";
-            }
-            else {
-              //sendAT('/P808:'+ document.getElementById("p808-box").value);
-              sendAT('/P808:'+ list_value.toString());
-              document.getElementById("settings-message").innerHTML = lang_map[122];//"Updating P808. Please wait...";
-            }
-            //document.getElementById("p808-box").value = "";        
-            break;
+            loop_apply(808);
+            return;
           case 25:
             document.getElementById("btnp605").style.background = '#FFCE34';   //PULSAR YELLOW
             //if(document.getElementById("p605-box").value == "")
@@ -1671,16 +2179,21 @@ async function sendAT(cmd) {
             document.getElementById("btnp21").style.background = '#FFCE34';   //PULSAR YELLOW
             if(document.getElementById("p21-box").value == "") {
               sendAT('/P21');
-              document.getElementById("settings-message").innerHTML = lang_map[112];//"Querying P21. Please wait...";
+              document.getElementById("trace-message").innerHTML = lang_map[112];//"Querying P21. Please wait...";
             }
             else {
               sendAT('/P21:'+ document.getElementById("p21-box").value);
-              document.getElementById("settings-message").innerHTML = lang_map[124];//"Updating P21. Please wait...";
+              document.getElementById("trace-message").innerHTML = lang_map[124];//"Updating P21. Please wait...";
             }
             document.getElementById("p21-box").value = "";        
             break; 
           default:
             break;
+        }
+        if(!param_sets_loaded && button_press >= 20 && button_press <= 23) {
+          // Mode, units and range changes can invalidate the cached loop endpoints.
+          document.getElementById('p834-box').value = '';
+          document.getElementById('p835-box').value = '';
         }
       } else {
         //log('Device not in Normal mode!');
@@ -1778,6 +2291,12 @@ async function sendAT(cmd) {
       document.getElementById("btnp808").innerHTML = lang_map[10];
       document.getElementById("btnp605").innerHTML = lang_map[10];
       document.getElementById("btnp21").innerHTML = lang_map[10];
+      for(var loopParameter of [834, 835, 838, 839, 809]) {
+        document.getElementById('btnp' + loopParameter).textContent = lang_map[10];
+      }
+      for(var loopText of document.querySelectorAll('#loop-fields [data-lang-index]')) {
+        loopText.textContent = lang_map[Number(loopText.dataset.langIndex)].replace('{value}', loopText.dataset.value || '');
+      }
       document.getElementById("bluetooth-parameters-label").innerHTML = lang_map[17];
       document.getElementById("bt-range-label1").innerHTML = lang_map[18];
       document.getElementById("deviceName").innerHTML = lang_map[19];
@@ -2213,6 +2732,7 @@ function myLoadFunction() {
   }
   function updateState(cur_state) {
     // log(cur_state);
+    if(cur_state != 3 && loop_pending) loop_failed();
     presysState=sysState;
     sysState=cur_state;
   }
@@ -2254,25 +2774,26 @@ function myLoadFunction() {
     else  // Default selection
       lang_map = lang_array.map(a => a.English);
   </script>
-    <table>
-      <tr style="width:100%">
-          <td>
+    <table style="width: 100%; table-layout: fixed">
+      <tr>
+          <td style="text-align: left">
               <div class="logo">
                 <a href="" style="text-decoration:none;">
-                  <img src="./img/pulsarlogo.svg"  alt="Logo" onclick="bleExitPage();" style="width:360px;height:120px;border:none;text-decoration:none;color:#eeeeee00;">
+                  <img src="./img/pulsarlogo.svg"  alt="Logo" onclick="bleExitPage();" style="width:275px;height:120px;border:none;text-decoration:none;color:#eeeeee00;">
                 </a>
               </div>
           </td>
-          <td>      
-            <div class="my_text" id="id_title"  style="font-family:'Segoe UI SemiBold';  font-size: 36pt; font-weight:500; color: rgb(255, 255, 255); text-align: center;">
-              REFLECT
+          <td style="text-align: left; padding-left: 0px">      
+            <div class="my_text" id="id_title"  style="font-family:'Segoe UI SemiBold'; width:350px; font-size: 26pt; font-weight:500; color: rgb(255, 255, 255); text-align: left;">
+              PULSAR REFLECT™
             </div>
             <script>
               document.getElementById("id_title").innerHTML = lang_map[0];
             </script>
-            <div class="my_text" id="device_title"  style="font-family:'Segoe UI SemiBold';  font-size: 36pt; font-weight:500; color: white; text-align: center;"></div>
+            <div class="my_text" id="device_title"  style="font-family:'Segoe UI SemiBold'; width:350px; font-size: 26pt; font-weight:500; color: white; text-align: center;"></div>
           </td> 
-          <td></td><td></td>
+          <td></td>
+    <!--  <td></td>
           <td></td><td></td>    
           <td></td><td></td>   
           <td></td><td></td>
@@ -2282,7 +2803,7 @@ function myLoadFunction() {
           <td></td><td></td>    
           <td></td><td></td>
           <td></td><td></td>
-          <td></td><td></td>
+          <td></td><td></td> -->
           <!-- <td>
              <div class="logo1">
               <a href="" style="text-decoration:none;">
@@ -2299,6 +2820,7 @@ function myLoadFunction() {
       <button class="accordion-tab accordion-active" data-actab-group="0" data-actab-id="0" id="id_home" onclick="c_state=0;updateState(c_state); trace_start();" >HOME</button>
       <button class="accordion-tab" data-actab-group="0" data-actab-id="1" id="id_trace" onclick="c_state=1;updateState(c_state); trace_start();">TRACE</button>
       <button class="accordion-tab" data-actab-group="0" data-actab-id="2" id="id_parameters" onclick="c_state=2;updateState(c_state); param_update();">SETTINGS</button>      
+      <button class="accordion-tab" data-actab-group="0" data-actab-id="3" id="id_loop" onclick="c_state=3;updateState(c_state);param_update();">LOOP</button>
     </section>
     <script>
       document.getElementById("id_home").innerHTML = lang_map[1];
@@ -2386,7 +2908,7 @@ function myLoadFunction() {
                             </td>
                           </tr> -->
                           <tr>                            
-                            <td><label id = "parameters-label" class="label_default" style="font-family:'Segoe UI Bold';  font-size: 24pt; font-weight: bold; width:80px; height:80px;">LIVE PARAMETERS</label></td>
+                            <td><label id="parameters-label" class="label_default parameter-section-heading">LIVE PARAMETERS</label></td>
                           </tr>
                           <tr>
                             <td><label id = "level-label" class="label_default" style="font-family:'Segoe UI SemiBold';  font-size: 24pt; font-weight: 500; ">LEVEL:</label></td>
@@ -2554,7 +3076,7 @@ function myLoadFunction() {
         <div>
           <table style="width:100%">
             <tr>            
-              <label id = "parameters-label-t" class="label_default" style="font-family:'Segoe UI Bold';  font-size: 24pt; font-weight: bold; width:100%; height:20px; display: inline-block;">LIVE PARAMETERS</label>
+              <label id="parameters-label-t" class="label_default parameter-section-heading">LIVE PARAMETERS</label>
             </tr>
           </table>
         </div>
@@ -2579,6 +3101,8 @@ function myLoadFunction() {
               </td>                 
                 <!-- Offline mode -->
                 <script src="./js/chart.js"></script>
+                <script src="js/hammer.min.js"></script>
+                <script src="js/chartjs-plugin-zoom.min.js"></script>
                 <script>
                 // X points/labels
                 var xdata = [];
@@ -2586,6 +3110,11 @@ function myLoadFunction() {
                 xdata[0] = 0.00;
                 for (let i = 1; i <= 200; i++) {
                     xdata[i] = Math.round((xdata[i - 1] + 0.036)*1000)/1000;
+                }
+                // Zooming out does not work if labels are numbers
+                for (let i = 0; i <= 200; i++)
+                {
+                  xdata[i] = xdata[i].toString();
                 }
 
                 // Echo variables
@@ -2602,7 +3131,7 @@ function myLoadFunction() {
                     labels: xdata,            
                     datasets: [{
                         type: 'line',
-                        label: 'Datem',   // Datem array
+                        label: 'DATEM',   // Datem array
                         data: datem,
                         radius: 1,
                         pointRadius: 1,
@@ -2633,16 +3162,69 @@ function myLoadFunction() {
                         ctx.save();
                         //alert("Near = " + near_blanking_var + ", Far = " + far_blanking_dist + ", Empty = " + empty_distance + ", Compensated = " + compensated_var + ", Mode = " + mode_var);
                         ctx.fillStyle = 'yellow';
-                        ctx.fillRect(x.getPixelForValue(0), top, near_blanking_var*width/compensated_var, height); // Near blanking area (x.getPixelForValue(0), top, 0.3*width/7.2, height)
+                        //ctx.fillRect(x.getPixelForValue(0), top, near_blanking_var*width/compensated_var, height); // Near blanking area (x.getPixelForValue(0), top, 0.3*width/7.2, height)
+                        start_point = Math.max(x.getPixelForValue(0), left);
+                        //width_val = Math.max(x.getPixelForValue(near_blanking_var*width/compensated_var), left) - start_point;
+
+                        // Show Near blanking area from left to P107
+                        width_val = Math.max(x.getPixelForValue(near_blanking_var*200/compensated_var), left) - start_point;
+                        ctx.fillRect(start_point, top, width_val, height);    // Near blanking area
+
+                        //console.log(start_point + ", " + near_blanking_var*width/compensated_var + ", " + width_val);
+						
+                        ctx.fillStyle = '#EFFFE8';
+                        //ctx.fillRect(x.getPixelForValue((200.0/1.2)*(empty_distance - span_val)/mode_var), top, span_val*width/compensated_var, height); // Span
+                        //start_point = Math.max(x.getPixelForValue((200.0/((100.0 + far_blanking_var)/100.0))*(empty_distance - span_val)/mode_var), left);
+                        //width_val = Math.max(x.getPixelForValue((200.0/((100.0 + far_blanking_var)/100.0))*empty_distance/mode_var), left) - start_point;
+
+                        // Show Span area from Empty distance back to near blanking or P106
+                        if (span_val > (empty_distance-near_blanking_var))
+                        {
+                          // Case 1:
+                          // If SPAN value is greater than the measuring region.
+                          // From Near blanking (P107) to Empty distance (P105)
+                          start_point = Math.max(x.getPixelForValue(near_blanking_var*200/compensated_var), left);
+                        }
+                        else
+                        {
+                          // Case 2:
+                          // If SPAN value is smaller than or equal to the measuring region.
+                          // On the Trace, it will show a white region between near blanking and span.
+                          // Calculate from (Empty distance (P105) - SPAN (P106)) to Empty distance (P105)
+                          start_point = Math.max(x.getPixelForValue((empty_distance - span_val)*200/compensated_var), left);
+                        }
+                        width_val = Math.max(x.getPixelForValue(empty_distance*200/compensated_var), left) - start_point;
+                        //width_val = x.getPixelForValue((200.0/1.2)*(span_val)/mode_var);
+                        ctx.fillRect(start_point, top, width_val, height);    // Span
+						
                         ctx.fillStyle = 'yellow';
-                        ctx.fillRect(x.getPixelForValue((200.0/1.2)*empty_distance/mode_var), top, width*(far_blanking_dist - empty_distance)/compensated_var, height); // Far blanking area
-                        ctx.strokeStyle = 'red';
-                        ctx.strokeRect(x.getPixelForValue(distance_var*200/compensated_var), top, 0, height);  // Distance//(x0, y0, x1, y1); (x.getPixelForValue(distance_var*200/7.2), top, 0, height)
-                        ctx.strokeStyle = 'black';
-                        ctx.strokeRect(x.getPixelForValue(gate_start/5), top, 0, height);  // Gate start (x.getPixelForValue((distance_var - 0.20)*200/7.2), top, 0, height)
-                        ctx.strokeStyle = 'black';
-                        ctx.strokeRect(x.getPixelForValue(gate_stop/5), top, 0, height);  // Gate stop (x.getPixelForValue((distance_var + 0.20)*200/7.2), top, 0, height)
-                        ctx.fillStyle = 'black';
+                        //ctx.fillRect(x.getPixelForValue((200.0/1.2)*empty_distance/mode_var), top, width*(far_blanking_dist - empty_distance)/compensated_var, height); // Far blanking area
+                        //start_point = Math.max(x.getPixelForValue((200.0/((100.0 + far_blanking_var)/100.0))*empty_distance/mode_var), left);
+                        //width_val = Math.max(x.getPixelForValue((200.0/((100.0 + far_blanking_var)/100.0))*far_blanking_dist/mode_var), left) - start_point;
+
+                        // Show Far blanking area from Empty distance (P105) to Far blanking % (P108)
+                        start_point = Math.max(x.getPixelForValue(empty_distance*200/compensated_var), left);
+                        width_val = Math.max(x.getPixelForValue((empty_distance*(100+far_blanking_var)/100)*200/compensated_var), left) - start_point;
+                        ctx.fillRect(start_point, top, width_val, height);    // Far blanking area
+						
+                        //console.log(left + ", " + x.getPixelForValue(0) + ", " + near_blanking_var + ", " + far_blanking_var + ", " + far_blanking_dist + ", " + empty_distance + ", " + span_val + ", " + mode_var + ", " + compensated_var + ", " + compensated_var_m);
+                        
+                        if(Math.max(x.getPixelForValue(distance_var*200/compensated_var), left) <= x.getPixelForValue(distance_var*200/compensated_var))
+                        {
+                          ctx.strokeStyle = 'red';
+                          ctx.strokeRect(x.getPixelForValue(distance_var*200/compensated_var), top, 0, height);  // Distance//(x0, y0, x1, y1); (x.getPixelForValue(distance_var*200/7.2), top, 0, height)
+                        }
+                        if(Math.max(x.getPixelForValue(gate_start/5), left) <= x.getPixelForValue(gate_start/5))
+                        {
+                          ctx.strokeStyle = 'black';
+                          ctx.strokeRect(x.getPixelForValue(gate_start/5), top, 0, height);  // Gate start (x.getPixelForValue((distance_var - 0.20)*200/7.2), top, 0, height)
+                        }
+                        if(Math.max(x.getPixelForValue(gate_stop/5), left) <= x.getPixelForValue(gate_stop/5))
+                        {
+                          ctx.strokeStyle = 'black';
+                          ctx.strokeRect(x.getPixelForValue(gate_stop/5), top, 0, height);  // Gate stop (x.getPixelForValue((distance_var + 0.20)*200/7.2), top, 0, height)
+                        }
+                        //ctx.fillStyle = 'black';
                         data_log_update();                  
                         // ctx.fillText("Length          = " + level_var.toFixed(3) + " m", x.getPixelForValue(140), top+10); // Dynamic variables
                         // ctx.fillText("Distance       = " + distance_var.toFixed(3) + " m", x.getPixelForValue(140), top+20);
@@ -2704,10 +3286,15 @@ function myLoadFunction() {
                 // config block
                 var config = {
                     type: 'line',
-                    data: data,
-                    plugins: [plugin, arbitraryLine], // Uses both plugins
+                    data: data,                    
                     options: {
                       plugins: {
+                        // Double the default coordinate text size and tooltip padding.
+                        tooltip: {
+                          titleFont: { size: 24 },
+                          bodyFont: { size: 24 },
+                          padding: 12
+                        },
                         legend: {
                             labels: {
                                 // This more specific font property overrides the global property
@@ -2715,7 +3302,35 @@ function myLoadFunction() {
                                     size: 24,
                                 }
                             }
-                        }
+                        },
+                        zoom: {
+                          zoom: {                           
+                            wheel: {
+                              enabled: true,
+                              mode: 'xy'
+                            },
+                            pinch: {
+                              enabled: true,
+                              mode: 'xy'
+                            },
+                            drag: {
+                              enabled: true,
+                              mode: 'y'
+                            },
+                            // mode: "x",
+                            speed: 0.10,
+                            threshold: 10,
+                            sensitivity: 3,                        
+                          },
+                          pan: {
+                            enabled: true,
+                            mode: 'xy'
+                          },
+                          limits: {
+                            y: {minRange: 200, min: 0, max: 1000/*, minRange: 100*/},
+                            x: {minRange: 20, min: 0, max: xdata.length/*, minRange: 1000*/}
+                          }
+                        },
                       },
                     maintainAspectRatio: false,                                      
                     scales: {                                 
@@ -2745,7 +3360,7 @@ function myLoadFunction() {
                                 font: {
                                   size: 24,
                                 }
-                            },                     
+                            },              
                         },                                       
                         y: {
                             title: {
@@ -2758,6 +3373,12 @@ function myLoadFunction() {
                             max: 1000,
                             min:0,
                             ticks: {
+                                callback: function(value) {
+                                  // if (Math.floor(value) === value) {
+                                  //   return value
+                                  // }
+                                  return Math.floor(value);
+                                },
                                 stepSize: 100,
                                 font: {
                                   size: 24,
@@ -2766,7 +3387,8 @@ function myLoadFunction() {
                             beginAtZero: true
                         },               
                     },                
-                    }                          
+                    },
+                    plugins: [plugin, arbitraryLine], // Uses both plugins                         
                 };
                 
                 // render / init block
@@ -2851,6 +3473,13 @@ function myLoadFunction() {
             </table>            
           </tr>                    
         </table>
+        <table style="width:100%; margin-top:24px;">
+            <tr>
+              <td><label id = "p21" class="label_default" style="font-family:'Segoe UI SemiBold';  font-size: 24pt; font-weight: 500; width:80px; height:80px;">SET DISTANCE (P21)</label></td>
+              <td><input type="text" id="p21-box" autocomplete="off" style="font-family:'Segoe UI SemiBold';  font-size: 24pt; font-weight: 500; width:270px; height:80px;" onkeydown="button_press = 26; wasEnter2(this);"></td>
+              <td><button type="button" id="btnp21" class="button" onclick="button_press = 26; param_check();">UPDATE</button></td>
+            </tr>
+        </table>
         <script>
           document.getElementById("btn_trace").innerHTML = lang_map[8];  
           document.getElementById("parameters-label-t").innerHTML = lang_map[12];
@@ -2871,7 +3500,7 @@ function myLoadFunction() {
           </table>          
           <div id="bt_range" style='top:-40%;  left: -20%; width:68%; height:100%; border-style: solid; border-width: 5px; border-radius: 10px;  border-color: rgba(255, 255, 255, 0.952);' align="center">
             <tr>
-              <td><label id = "bluetooth-parameters-label" class="label_default" style="font-family:'Segoe UI Bold';  font-size: 24pt; font-weight: bold; height:50px; display: inline-block;">BLUETOOTH PARAMETERS</label></td>
+              <td><label id="bluetooth-parameters-label" class="label_default parameter-section-heading">BLUETOOTH PARAMETERS</label></td>
             </tr>
             <table style="width:100%;">
               <tr>
@@ -2913,7 +3542,7 @@ function myLoadFunction() {
           <!-- <div id="param_fields_main" style=" width:90%; height:90%; border-style: solid; border-width: 1px; border-radius: 10px;  border-color: rgba(243, 112, 33, 0.952);"> -->
             <div id="param_fields" style=" left: -40%; top: -20%; width:68%; height:80%; border-style: solid; border-width: 5px; border-radius: 10px;  border-color: rgba(255, 255, 255, 0.952);" align="center">
             <tr>
-              <td><label id = "radar-parameters-label" class="label_default" style="font-family:'Segoe UI Bold';  font-size: 24pt; font-weight: bold; height:50px; display: inline-block;">RADAR PARAMETERS</label></td>
+              <td><label id="radar-parameters-label" class="label_default parameter-section-heading">RADAR PARAMETERS</label></td>
             </tr>
             <tr style="width:100%">
               <td>
@@ -2979,20 +3608,7 @@ function myLoadFunction() {
               <td><input type="text" id="p106-box" autocomplete="off" style="font-family:'Segoe UI SemiBold';  font-size: 24pt; font-weight: 500; width:270px; height:80px;" onkeydown="button_press = 23; wasEnter2(this);"></td>
               <td><button type="button" id="btnp106" class="button" onclick="button_press = 23; param_check();">UPDATE</button></td>
             </tr>
-            <tr>
-              <td><label id = "p808" class="label_default" style="font-family:'Segoe UI SemiBold';  font-size: 24pt; font-weight: 500; width:80px; height:80px;">FAIL MODE (P808)</label></td>
-              <!-- <td><input type="text" id="p808-box" style="font-size: 24pt; font-weight: bold; width:180px; height:80px;" onkeydown="button_press = 24; wasEnter2(this);"></td> -->
-              <td><select name = "p808dropdown" id = "p808List" style="font-family:'Segoe UI SemiBold';  font-size: 24pt; font-weight: 500; width:270px; height:80px;" onchange = "button_press = 24;" > 
-                <option value="0"> Choose P808 </option>  
-                <option value="1"> 1 = Hold </option>  
-                <option value="2"> 2 = High </option>  
-                <option value="3"> 3 = Low </option>  
-                <option value="4"> 4 = 22mA </option>  
-                <option value="5"> 5 = 3.8mA </option>  
-              </select>
-              </td>
-              <td><button type="button" id="btnp808" class="button" onclick="button_press = 24; param_check();">UPDATE</button></td>
-            </tr>
+
             <tr>
               <td><label id = "p605" class="label_default" style="font-family:'Segoe UI SemiBold';  font-size: 24pt; font-weight: 500; width:80px; height:80px;">VOLUME UNITS (P605)</label></td>
               <!-- <td><input type="text" id="p605-box" style="font-size: 24pt; font-weight: bold; width:180px; height:80px;" onkeydown="button_press = 25; wasEnter2(this);"></td> -->
@@ -3011,11 +3627,7 @@ function myLoadFunction() {
               </td>
               <td><button type="button" id="btnp605" class="button" onclick="button_press = 25; param_check();">UPDATE</button></td>
             </tr>
-            <tr>
-              <td><label id = "p21" class="label_default" style="font-family:'Segoe UI SemiBold';  font-size: 24pt; font-weight: 500; width:80px; height:80px;">SET DISTANCE (P21)</label></td>
-              <td><input type="text" id="p21-box" autocomplete="off" style="font-family:'Segoe UI SemiBold';  font-size: 24pt; font-weight: 500; width:270px; height:80px;" onkeydown="button_press = 26; wasEnter2(this);"></td>
-              <td><button type="button" id="btnp21" class="button" onclick="button_press = 26; param_check();">UPDATE</button></td>
-            </tr>
+
             <script>
               document.getElementById("btndeviceName").innerHTML = lang_map[10];
               document.getElementById("btnpWord").innerHTML = lang_map[10];
@@ -3024,7 +3636,6 @@ function myLoadFunction() {
               document.getElementById("btnp104").innerHTML = lang_map[10];
               document.getElementById("btnp105").innerHTML = lang_map[10];
               document.getElementById("btnp106").innerHTML = lang_map[10];
-              document.getElementById("btnp808").innerHTML = lang_map[10];
               document.getElementById("btnp605").innerHTML = lang_map[10];
               document.getElementById("btnp21").innerHTML = lang_map[10];
               document.getElementById("bluetooth-parameters-label").innerHTML = lang_map[17];
@@ -3037,7 +3648,6 @@ function myLoadFunction() {
               document.getElementById("p104").innerHTML = lang_map[24];
               document.getElementById("p105").innerHTML = lang_map[25];
               document.getElementById("p106").innerHTML = lang_map[26];
-              document.getElementById("p808").innerHTML = lang_map[27];
               document.getElementById("p605").innerHTML = lang_map[28];
               document.getElementById("p21").innerHTML = lang_map[29];
               document.getElementsByName('p241dropdown')[0].options[0].innerHTML = lang_map[30];
@@ -3060,12 +3670,6 @@ function myLoadFunction() {
               document.getElementsByName('p104dropdown')[0].options[3].innerHTML = lang_map[45];
               document.getElementsByName('p104dropdown')[0].options[4].innerHTML = lang_map[46];
               document.getElementsByName('p104dropdown')[0].options[5].innerHTML = lang_map[47];
-              document.getElementsByName('p808dropdown')[0].options[0].innerHTML = lang_map[48];
-              document.getElementsByName('p808dropdown')[0].options[1].innerHTML = lang_map[49];
-              document.getElementsByName('p808dropdown')[0].options[2].innerHTML = lang_map[50];
-              document.getElementsByName('p808dropdown')[0].options[3].innerHTML = lang_map[51];
-              document.getElementsByName('p808dropdown')[0].options[4].innerHTML = lang_map[52];
-              document.getElementsByName('p808dropdown')[0].options[5].innerHTML = lang_map[53];
               document.getElementsByName('p605dropdown')[0].options[0].innerHTML = lang_map[54];
               document.getElementsByName('p605dropdown')[0].options[1].innerHTML = lang_map[55];
               document.getElementsByName('p605dropdown')[0].options[2].innerHTML = lang_map[56];
@@ -3081,6 +3685,113 @@ function myLoadFunction() {
         </div>
         </div>
       </article>
+      <article class="accordion-item" data-actab-group="0" data-actab-id="3">
+        <h4 class="accordion-item__label">LOOP</h4>
+        <div class="accordion-item__container">
+          <div id="loop-fields">
+            <p id="loop-message" role="status" aria-live="polite"></p>
+            <h2 data-lang-index="149">mA OUTPUT PARAMETERS</h2>
+            <table class="loop-parameters">
+            <tr>
+              <td><label for="p834-box" data-lang-index="150" class="label_default" style="font-family:'Segoe UI SemiBold'; font-size:24pt; font-weight:500; width:80px; height:80px;">mA LOW LEVEL (P834)</label></td>
+              <td><input type="number" step="any" id="p834-box" autocomplete="off" style="font-family:'Segoe UI SemiBold'; font-size:24pt; font-weight:500; width:270px; height:80px;" onkeydown="if(event.key === 'Enter') loop_apply(834);"></td>
+              <td><button type="button" id="btnp834" class="button" onclick="loop_apply(834);">UPDATE</button></td>
+            </tr>
+            <tr>
+              <td><label for="p835-box" data-lang-index="151" class="label_default" style="font-family:'Segoe UI SemiBold'; font-size:24pt; font-weight:500; width:80px; height:80px;">mA HIGH LEVEL (P835)</label></td>
+              <td><input type="number" step="any" id="p835-box" autocomplete="off" style="font-family:'Segoe UI SemiBold'; font-size:24pt; font-weight:500; width:270px; height:80px;" onkeydown="if(event.key === 'Enter') loop_apply(835);"></td>
+              <td><button type="button" id="btnp835" class="button" onclick="loop_apply(835);">UPDATE</button></td>
+            </tr>
+            <tr>
+              <td><label for="p838-box" data-lang-index="152" class="label_default" style="font-family:'Segoe UI SemiBold'; font-size:24pt; font-weight:500; width:80px; height:80px;">LOW TRIM (P838)</label></td>
+              <td><input type="number" step="any" id="p838-box" autocomplete="off" style="font-family:'Segoe UI SemiBold'; font-size:24pt; font-weight:500; width:270px; height:80px;" onkeydown="if(event.key === 'Enter') loop_apply(838);"></td>
+              <td><button type="button" id="btnp838" class="button" onclick="loop_apply(838);">UPDATE</button></td>
+            </tr>
+            <tr>
+              <td><label for="p839-box" data-lang-index="153" class="label_default" style="font-family:'Segoe UI SemiBold'; font-size:24pt; font-weight:500; width:80px; height:80px;">HIGH TRIM (P839)</label></td>
+              <td><input type="number" step="any" id="p839-box" autocomplete="off" style="font-family:'Segoe UI SemiBold'; font-size:24pt; font-weight:500; width:270px; height:80px;" onkeydown="if(event.key === 'Enter') loop_apply(839);"></td>
+              <td><button type="button" id="btnp839" class="button" onclick="loop_apply(839);">UPDATE</button></td>
+            </tr>
+            <tr>
+              <td><label id = "p808" class="label_default" style="font-family:'Segoe UI SemiBold';  font-size: 24pt; font-weight: 500; width:80px; height:80px;">FAIL MODE (P808)</label></td>
+              <!-- <td><input type="text" id="p808-box" style="font-size: 24pt; font-weight: bold; width:180px; height:80px;" onkeydown="button_press = 24; wasEnter2(this);"></td> -->
+              <td><select name = "p808dropdown" id = "p808List" style="font-family:'Segoe UI SemiBold';  font-size: 24pt; font-weight: 500; width:270px; height:80px;" onchange = "button_press = 24;" >
+                <option value="0"> Choose P808 </option>
+                <option value="1"> 1 = Hold </option>
+                <option value="2"> 2 = High </option>
+                <option value="3"> 3 = Low </option>
+                <option value="4"> 4 = 22mA </option>
+                <option value="5"> 5 = 3.8mA </option>
+              </select>
+              </td>
+              <td><button type="button" id="btnp808" class="button" onclick="button_press = 24; param_check();">UPDATE</button></td>
+            </tr>
+            <tr>
+              <td><label for="p809-box" data-lang-index="154" class="label_default" style="font-family:'Segoe UI SemiBold'; font-size:24pt; font-weight:500; width:80px; height:80px;">FAIL TIME (P809) [min]</label></td>
+              <td><input type="number" min="0" max="1000" step="any" id="p809-box" autocomplete="off" style="font-family:'Segoe UI SemiBold'; font-size:24pt; font-weight:500; width:270px; height:80px;" onkeydown="if(event.key === 'Enter') loop_apply(809);"></td>
+              <td><button type="button" id="btnp809" class="button" onclick="loop_apply(809);">UPDATE</button></td>
+            </tr>
+            </table>
+            <h2>
+              <span data-lang-index="155">4-20 mA CALIBRATION</span>
+              <span class="calibration-info"
+                    onpointerenter="if(event.pointerType === 'mouse') this.querySelector('button').setAttribute('aria-expanded', 'true');"
+                    onpointerleave="if(event.pointerType === 'mouse' && this.querySelector('button') !== document.activeElement) this.querySelector('button').setAttribute('aria-expanded', 'false');">
+                <button type="button" id="calibration-info-button" aria-describedby="calibration-info-tooltip" aria-expanded="false"
+                        onclick="this.setAttribute('aria-expanded', this.getAttribute('aria-expanded') !== 'true');"
+                        onfocus="if(this.matches(':focus-visible')) this.setAttribute('aria-expanded', 'true');"
+                        onblur="this.setAttribute('aria-expanded', 'false');"
+                        onkeydown="if(event.key === 'Escape') { this.setAttribute('aria-expanded', 'false'); event.stopPropagation(); }">
+                  <span aria-hidden="true">ⓘ</span>
+                  <span class="calibration-info-label" data-lang-index="176">Firmware version information</span>
+                </button>
+                <span id="calibration-info-tooltip" role="tooltip" data-lang-index="175">This section is available only for firmware version 319 or above (P926).</span>
+              </span>
+            </h2>
+            <p id="force-status" role="status" hidden></p>
+            <fieldset id="force-controls" disabled>
+            <table class="loop-parameters">
+            <tr>
+              <td><label for="force-current" data-lang-index="156" class="label_default" style="font-family:'Segoe UI SemiBold'; font-size:24pt; font-weight:500; width:80px; height:80px;">4–20 mA</label></td>
+              <td><input type="number" id="force-current" value="4.000" min="0" max="23" step="0.001" autocomplete="off" style="font-family:'Segoe UI SemiBold'; font-size:24pt; font-weight:500; width:270px; height:80px;" onkeydown="if(event.key === 'Enter') loop_calibrate(40);"></td>
+              <td><button type="button" id="btn-force-current" data-lang-index="10" class="button" onclick="loop_calibrate(40);">UPDATE</button></td>
+            </tr>
+            <tr>
+              <td><label for="trim-low-current" data-lang-index="157" class="label_default" style="font-family:'Segoe UI SemiBold'; font-size:24pt; font-weight:500; width:80px; height:80px;">Set 4 mA</label></td>
+              <td><input type="number" id="trim-low-current" value="4.000" min="3.5" max="6" step="0.001" autocomplete="off" style="font-family:'Segoe UI SemiBold'; font-size:24pt; font-weight:500; width:270px; height:80px;" onkeydown="if(event.key === 'Enter') loop_calibrate(45);"></td>
+              <td><button type="button" id="btn-trim-low" data-lang-index="10" class="button" onclick="loop_calibrate(45);">UPDATE</button></td>
+            </tr>
+            <tr>
+              <td><label for="trim-high-current" data-lang-index="158" class="label_default" style="font-family:'Segoe UI SemiBold'; font-size:24pt; font-weight:500; width:80px; height:80px;">Set 20 mA</label></td>
+              <td><input type="number" id="trim-high-current" value="20.000" min="18" max="22" step="0.001" autocomplete="off" style="font-family:'Segoe UI SemiBold'; font-size:24pt; font-weight:500; width:270px; height:80px;" onkeydown="if(event.key === 'Enter') loop_calibrate(46);"></td>
+              <td><button type="button" id="btn-trim-high" data-lang-index="10" class="button" onclick="loop_calibrate(46);">UPDATE</button></td>
+            </tr>
+            <tr>
+              <td><label data-lang-index="159" class="label_default" style="font-family:'Segoe UI SemiBold'; font-size:24pt; font-weight:500; width:80px; height:80px;">Clear 4–20 mA user trims</label></td>
+              <td></td>
+              <td><button type="button" id="btn-clear-trims" data-lang-index="10" class="button" onclick="loop_calibrate(83);">UPDATE</button></td>
+            </tr>
+            </table>
+            </fieldset>
+          </div>
+        </div>
+      </article>
+      <script>
+              document.getElementById("btnp808").innerHTML = lang_map[10];
+              document.getElementById("p808").innerHTML = lang_map[27];
+              document.getElementsByName('p808dropdown')[0].options[0].innerHTML = lang_map[48];
+              document.getElementsByName('p808dropdown')[0].options[1].innerHTML = lang_map[49];
+              document.getElementsByName('p808dropdown')[0].options[2].innerHTML = lang_map[50];
+              document.getElementsByName('p808dropdown')[0].options[3].innerHTML = lang_map[51];
+              document.getElementsByName('p808dropdown')[0].options[4].innerHTML = lang_map[52];
+              document.getElementsByName('p808dropdown')[0].options[5].innerHTML = lang_map[53];
+        for(var loopParameter of [834, 835, 838, 839, 809]) {
+          document.getElementById('btnp' + loopParameter).textContent = lang_map[10];
+        }
+        for(var loopText of document.querySelectorAll('#loop-fields [data-lang-index]')) {
+          loopText.textContent = lang_map[Number(loopText.dataset.langIndex)].replace('{value}', loopText.dataset.value || '');
+        }
+      </script>
       <!-- </div> -->
     
     </section>
@@ -3089,10 +3800,10 @@ function myLoadFunction() {
       <table>
         <tr>
           <td style=" text-align:center;font-size:24px;  background-color:rgb(51, 179, 74);;color:#2e2323;">
-            <p style="font-family:'Segoe UI Normal';  width: 115%; text-align:center; color:#ffffff; font-size:20pt;line-height:40px;">&copy; Pulsar Measurement 2023<br></p>
+            <p style="font-family:'Segoe UI Normal';  width: 115%; text-align:center; color:#ffffff; font-size:20pt;line-height:40px;">&copy; Pulsar Measurement 2025<br></p>
           </td>
           <td style=" text-align:center;font-size:24px;  background-color:rgb(51, 179, 74);;color:#2e2323;">
-            <p style="font-family:'Segoe UI Normal';  width: 0%; text-align:right; color:#ffffff; font-size:12pt;line-height:40px; font-style: italic;">v2.0.0<br></p>
+            <p style="font-family:'Segoe UI Normal';  width: 0%; text-align:right; color:#ffffff; font-size:12pt;line-height:40px; font-style: italic;">v2.4.0<br></p>
           </td>
         </tr>
       </table>

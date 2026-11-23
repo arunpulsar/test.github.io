@@ -88,16 +88,17 @@
   }
   .accordion-tabs .accordion-tab {
     background: rgba(68, 127, 255, 0.1);
-    padding: 1rem 2rem;
+    padding: 1rem 0.5rem;
     font-family:'Segoe UI SemiBold';src: url('../fonts/segoeui.woff2') format('woff2'); 
-    font-size: 36pt;
+    font-size: 28pt;
     font-weight:500;
     color: rgb(255, 255, 255);
-    flex: 1;
-    border:10px;
+    flex: 1 1 0;
+    min-width: 0;
+    white-space: nowrap;
     cursor: pointer;
     transition: background 0.1s ease;
-    border: rgb(249, 226, 200) solid 1px;
+    border: rgb(249, 226, 200) solid 2px;
   }
   .accordion-tabs .accordion-tab:hover {
     background: rgba(249, 249, 249, 0.01);
@@ -185,6 +186,165 @@ body {
   font-size: 0.9rem;
   margin-top: 2rem;
   cursor: pointer;
+}
+
+#loop-fields {
+  width: 68%;
+  font-family: 'Segoe UI Normal', sans-serif;
+  font-size: 24pt;
+  color: #000;
+}
+.label_default.parameter-section-heading,
+#loop-fields h2 {
+  display: block;
+  font-family: 'Segoe UI Normal', sans-serif;
+  font-weight: bold;
+  color: #365072;
+  font-size: 24pt;
+  text-align: center;
+  border-bottom: 1px solid #ccc;
+  padding-bottom: 16px;
+  margin: 32px 0 24px;
+}
+#loop-fields p {
+  font-size: 22pt;
+  line-height: 1.45;
+  margin: 12px 0 24px;
+}
+.loop-input-row, .loop-actions {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  margin: 24px 0 36px;
+}
+.loop-input-row > label:first-child:not(.loop-value) {
+  min-width: 210px;
+}
+.loop-value {
+  flex: 1;
+  white-space: nowrap;
+}
+#loop-fields input, #loop-fields select {
+  color: #000;
+  font-family: inherit;
+  font-size: 24pt;
+  height: 80px;
+  max-width: 100%;
+  padding: 12px;
+}
+#loop-fields input {
+  width: 75%;
+}
+#loop-fields .loop-parameters input {
+  border: 1px solid #767676;
+}
+#loop-fields .loop-parameters {
+  table-layout: fixed;
+}
+#loop-fields .loop-parameters td:nth-child(2) {
+  width: 286px;
+}
+#loop-fields .loop-parameters td:nth-child(3) {
+  width: 288px;
+}
+#loop-fields select {
+  flex: 1;
+  min-width: 0;
+}
+#loop-fields button {
+  flex-shrink: 0;
+}
+#loop-fields .loop-input-row > button {
+  width: 200px;
+}
+#loop-fields #force-mode {
+  font-size: 20pt;
+}
+#loop-fields button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+#loop-message, #force-status {
+  font-style: italic;
+}
+#force-status {
+  border: 1px solid #365072;
+  border-radius: 4px;
+  padding: 18px;
+}
+#force-controls {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+.calibration-info {
+  display: inline-block;
+  position: relative;
+  vertical-align: middle;
+}
+#calibration-info-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  padding: 0;
+  margin-left: 8px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent !important; /* Keep the icon clear when connection status recolours action buttons. */
+  color: #365072;
+  font: inherit;
+  font-size: 36px;
+  cursor: help;
+}
+#calibration-info-button:focus-visible {
+  outline: 2px solid #365072;
+  outline-offset: 3px;
+}
+.calibration-info-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+#calibration-info-tooltip {
+  display: none;
+  position: absolute;
+  bottom: 100%;
+  right: 0;
+  z-index: 10;
+  width: min(640px, 75vw);
+  padding: 18px;
+  border-radius: 6px;
+  background: #365072;
+  color: #fff;
+  font-size: 20pt;
+  font-weight: normal;
+  line-height: 1.4;
+  text-align: left;
+  white-space: normal;
+}
+#calibration-info-button[aria-expanded="true"] + #calibration-info-tooltip {
+  display: block;
+}
+.loop-actions {
+  flex-wrap: wrap;
+  justify-content: center;
+}
+#loop-fields #btn-clear-force {
+  width: 100%;
+  height: auto;
+  min-height: 80px;
+  padding: 16px;
+}
+@media (min-width: 600px) {
+  .accordion-item[data-actab-id="3"] > .accordion-item__label {
+    display: none;
+  }
 }
 
 
